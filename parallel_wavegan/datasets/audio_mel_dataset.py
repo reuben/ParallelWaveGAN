@@ -22,10 +22,8 @@ class AudioMelDataset(Dataset):
 
     def __init__(self,
                  root_dir,
-                 audio_query="*.h5",
-                 mel_query="*.h5",
-                 audio_load_fn=lambda x: read_hdf5(x, "wave"),
-                 mel_load_fn=lambda x: read_hdf5(x, "feats"),
+                 file_ids,
+                 ap, 
                  audio_length_threshold=None,
                  mel_length_threshold=None,
                  return_filename=False,
@@ -45,25 +43,26 @@ class AudioMelDataset(Dataset):
             allow_cache (bool): Whether to allow cache of the loaded files.
 
         """
+        self.ap = ap
         # find all of audio and mel files
-        audio_files = sorted(find_files(root_dir, audio_query))
-        mel_files = sorted(find_files(root_dir, mel_query))
+        audio_files = [file_id[0] for file_id in file_ids]
+        mel_files = [file_id[1] for file_id in file_ids]
 
         # filter by threshold
         if audio_length_threshold is not None:
-            audio_lengths = [audio_load_fn(f).shape[0] for f in audio_files]
+            audio_lengths = [self.audio_load_fn(f).shape[0] for f in audio_files]
             idxs = [idx for idx in range(len(audio_files)) if audio_lengths[idx] > audio_length_threshold]
             if len(audio_files) != len(idxs):
-                logging.warning(f"Some files are filtered by audio length threshold "
-                                f"({len(audio_files)} -> {len(idxs)}).")
+                print(f"some files are filtered by audio length threshold "
+                             f"({len(audio_files)} -> {len(idxs)}).")
             audio_files = [audio_files[idx] for idx in idxs]
             mel_files = [mel_files[idx] for idx in idxs]
         if mel_length_threshold is not None:
-            mel_lengths = [mel_load_fn(f).shape[0] for f in mel_files]
+            mel_lengths = [self.mel_load_fn(f).shape[0] for f in mel_files]
             idxs = [idx for idx in range(len(mel_files)) if mel_lengths[idx] > mel_length_threshold]
             if len(mel_files) != len(idxs):
-                logging.warning(f"Some files are filtered by mel length threshold "
-                                f"({len(mel_files)} -> {len(idxs)}).")
+                print(f"some files are filtered by mel length threshold "
+                             f"({len(mel_files)} -> {len(idxs)}).")
             audio_files = [audio_files[idx] for idx in idxs]
             mel_files = [mel_files[idx] for idx in idxs]
 
@@ -74,8 +73,6 @@ class AudioMelDataset(Dataset):
 
         self.audio_files = audio_files
         self.mel_files = mel_files
-        self.audio_load_fn = audio_load_fn
-        self.mel_load_fn = mel_load_fn
         self.return_filename = return_filename
         self.allow_cache = allow_cache
         if allow_cache:
@@ -83,6 +80,13 @@ class AudioMelDataset(Dataset):
             self.manager = Manager()
             self.caches = self.manager.list()
             self.caches += [() for _ in range(len(audio_files))]
+
+    def audio_load_fn(self, file_path):
+        wav =  self.ap.load_wav(file_path).astype('float32')
+        return wav
+    
+    def mel_load_fn(self, file_path):
+        return np.load(file_path).T
 
     def __getitem__(self, idx):
         """Get specified idx items.
@@ -102,6 +106,10 @@ class AudioMelDataset(Dataset):
 
         audio = self.audio_load_fn(self.audio_files[idx])
         mel = self.mel_load_fn(self.mel_files[idx])
+
+        audio = np.pad(audio, (0, self.ap.n_fft), mode="edge")
+        audio = audio[:len(mel) * self.ap.hop_length]
+        assert len(mel) * self.ap.hop_length == len(audio)
 
         if self.return_filename:
             if self.allow_cache:
@@ -152,8 +160,8 @@ class AudioDataset(Dataset):
             audio_lengths = [audio_load_fn(f).shape[0] for f in audio_files]
             idxs = [idx for idx in range(len(audio_files)) if audio_lengths[idx] > audio_length_threshold]
             if len(audio_files) != len(idxs):
-                logging.waning(f"some files are filtered by audio length threshold "
-                               f"({len(audio_files)} -> {len(idxs)}).")
+                print(f"some files are filtered by audio length threshold "
+                             f"({len(audio_files)} -> {len(idxs)}).")
             audio_files = [audio_files[idx] for idx in idxs]
 
         # assert the number of files
@@ -234,8 +242,8 @@ class MelDataset(Dataset):
             mel_lengths = [mel_load_fn(f).shape[0] for f in mel_files]
             idxs = [idx for idx in range(len(mel_files)) if mel_lengths[idx] > mel_length_threshold]
             if len(mel_files) != len(idxs):
-                logging.warning(f"Some files are filtered by mel length threshold "
-                                f"({len(mel_files)} -> {len(idxs)}).")
+                print(f"some files are filtered by mel length threshold "
+                             f"({len(mel_files)} -> {len(idxs)}).")
             mel_files = [mel_files[idx] for idx in idxs]
 
         # assert the number of files
