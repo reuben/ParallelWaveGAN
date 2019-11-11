@@ -10,6 +10,8 @@ import argparse
 import logging
 import os
 import sys
+import io
+import pickle
 
 from collections import defaultdict
 
@@ -30,6 +32,7 @@ from parallel_wavegan.datasets import AudioMelDataset
 from parallel_wavegan.losses import MultiResolutionSTFTLoss
 from parallel_wavegan.optimizers import RAdam
 from parallel_wavegan.utils import read_hdf5
+from parallel_wavegan.utils.audio import AudioProcessor
 
 # set to avoid matplotlib error in CLI environment
 matplotlib.use("Agg")
@@ -81,7 +84,8 @@ class Trainer(object):
         """Run training."""
         self.tqdm = tqdm(initial=self.steps,
                          total=self.config["train_max_steps"],
-                         desc="[train]")
+                         desc="[train]",
+                         file=sys.stdout)
         while True:
             # train one epoch
             self._train_epoch()
@@ -268,7 +272,7 @@ class Trainer(object):
             self.model[key].eval()
 
         # calculate loss for each batch
-        for eval_steps_per_epoch, batch in enumerate(tqdm(self.data_loader["dev"], desc="[eval]"), 1):
+        for eval_steps_per_epoch, batch in enumerate(tqdm(self.data_loader["dev"], desc="[eval]", file=sys.stdout), 1):
             # eval one step
             self._eval_step(batch)
 
@@ -331,9 +335,9 @@ class Trainer(object):
             y = np.clip(y, -1, 1)
             y_ = np.clip(y_, -1, 1)
             sf.write(figname.replace(".png", "_ref.wav"), y,
-                     self.config["sampling_rate"], "PCM_16")
+                     self.config["audio"]["sample_rate"], "PCM_16")
             sf.write(figname.replace(".png", "_gen.wav"), y_,
-                     self.config["sampling_rate"], "PCM_16")
+                     self.config["audio"]["sample_rate"], "PCM_16")
 
             if idx >= self.config["num_save_intermediate_results"]:
                 break
@@ -441,8 +445,7 @@ class Collater(object):
 
     @staticmethod
     def _assert_ready_for_upsampling(x, c, hop_size, context_window):
-        """Assert the audio and feature lengths are correctly adjusted for upsamping."""
-        assert len(x) == (len(c) - 2 * context_window) * hop_size
+        assert len(x) == (len(c) - 2 * context_window) * hop_size, f"{len(x)} vs {(len(c) - 2 * context_window) * hop_size}"
 
 
 def main():
@@ -450,9 +453,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train Parallel WaveGAN (See detail in parallel_wavegan/bin/train.py).")
     parser.add_argument("--train-dumpdir", type=str, required=True,
-                        help="directory including training data.")
-    parser.add_argument("--dev-dumpdir", type=str, required=True,
-                        help="directory including development data.")
+                        help="directory including trainning data.")
+    # parser.add_argument("--dev-dumpdir", type=str, required=True,
+    #                     help="directory including development data.")
     parser.add_argument("--outdir", type=str, required=True,
                         help="directory to save checkpoints.")
     parser.add_argument("--config", type=str, required=True,
@@ -510,10 +513,19 @@ def main():
         config = yaml.load(f, Loader=yaml.Loader)
     config.update(vars(args))
     config["version"] = parallel_wavegan.__version__  # add version info
+
+    # init AudioProcessor
+    ap = AudioProcessor(**config['audio'])
+
+    config.update({'hop_size':ap.hop_length})
     with open(os.path.join(args.outdir, "config.yml"), "w") as f:
         yaml.dump(config, f, Dumper=yaml.Dumper)
     for key, value in config.items():
         logging.info(f"{key} = {value}")
+
+    # load file ids
+    with open(f"{args.train_dumpdir}/metadata.txt", "r") as f:
+        metadata = [line.strip().split('|') for line in f.readlines()]
 
     # get dataset
     if config["remove_short_samples"]:
@@ -521,32 +533,28 @@ def main():
             2 * config["generator_params"].get("aux_context_window", 0)
     else:
         mel_length_threshold = None
-    if config["format"] == "hdf5":
-        audio_query, mel_query = "*.h5", "*.h5"
-        audio_load_fn = lambda x: read_hdf5(x, "wave")  # NOQA
-        mel_load_fn = lambda x: read_hdf5(x, "feats")  # NOQA
-    elif config["format"] == "npy":
-        audio_query, mel_query = "*-wave.npy", "*-feats.npy"
-        audio_load_fn = np.load
-        mel_load_fn = np.load
-    else:
-        raise ValueError("support only hdf5 or npy format.")
+    # if config["format"] == "hdf5":
+    #     audio_query, mel_query = "*.h5", "*.h5"
+    #     audio_load_fn = lambda x: read_hdf5(x, "wave")  # NOQA
+    #     mel_load_fn = lambda x: read_hdf5(x, "feats")  # NOQA
+    # elif config["format"] == "npy":
+    #     audio_query, mel_query = "*-wave.npy", "*-feats.npy"
+    #     audio_load_fn = np.load
+    #     mel_load_fn = np.load
+    # else:
+    #     raise ValueError("support only hdf5 or npy format.")
     dataset = {
         "train": AudioMelDataset(
             root_dir=args.train_dumpdir,
-            audio_query=audio_query,
-            mel_query=mel_query,
-            audio_load_fn=audio_load_fn,
-            mel_load_fn=mel_load_fn,
+            file_ids=metadata[:-64],
+            ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),  # keep compatibility
         ),
         "dev": AudioMelDataset(
-            root_dir=args.dev_dumpdir,
-            audio_query=audio_query,
-            mel_query=mel_query,
-            audio_load_fn=audio_load_fn,
-            mel_load_fn=mel_load_fn,
+            root_dir=args.train_dumpdir,
+            file_ids=metadata[-64:],
+            ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),  # keep compatibility
         ),
@@ -584,6 +592,7 @@ def main():
             shuffle=False if args.distributed else True,
             collate_fn=collater,
             batch_size=config["batch_size"],
+            sampler=train_sampler,
             num_workers=config["num_workers"],
             sampler=train_sampler,
             pin_memory=config["pin_memory"],
@@ -592,6 +601,7 @@ def main():
             dataset=dataset["dev"],
             shuffle=False if args.distributed else True,
             collate_fn=collater,
+            sampler=dev_sampler,
             batch_size=config["batch_size"],
             num_workers=config["num_workers"],
             sampler=dev_sampler,
@@ -677,3 +687,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
