@@ -458,6 +458,10 @@ def main():
     """Run training process."""
     parser = argparse.ArgumentParser(
         description="Train Parallel WaveGAN (See detail in parallel_wavegan/bin/train.py).")
+    parser.add_argument("--train-dumpdir", type=str, required=True,
+                        help="directory including trainning data.")
+    # parser.add_argument("--dev-dumpdir", type=str, required=True,
+    #                     help="directory including development data.")
     parser.add_argument("--outdir", type=str, required=True,
                         help="directory to save checkpoints.")
     parser.add_argument("--config", type=str, required=True,
@@ -593,6 +597,7 @@ def main():
             shuffle=False if args.distributed else True,
             collate_fn=collater,
             batch_size=config["batch_size"],
+            sampler=train_sampler,
             num_workers=config["num_workers"],
             sampler=train_sampler,
             pin_memory=config["pin_memory"],
@@ -601,6 +606,7 @@ def main():
             dataset=dataset["dev"],
             shuffle=False if args.distributed else True,
             collate_fn=collater,
+            sampler=dev_sampler,
             batch_size=config["batch_size"],
             num_workers=config["num_workers"],
             sampler=dev_sampler,
