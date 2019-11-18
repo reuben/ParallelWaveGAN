@@ -34,7 +34,7 @@ audio:
   clip_norm: true
   mel_fmin: 0.0
   mel_fmax: 8000.0
-  do_trim_silence: true
+  do_trim_silence: false
   format: "npy"           # Feature file format. "npy" or "hdf5" is supported.
 
 ###########################################################
