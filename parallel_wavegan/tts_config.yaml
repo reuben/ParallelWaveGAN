@@ -8,9 +8,9 @@ datasets:
     [
         {
             name: "tts_gen",
-            path: "/home/erogol/Data/LJSpeech-1.1/PWGAN_5233/",
-            metafile_train: "metadata_train.txt",
-            metafile_val: "metadata_val.txt"
+            path: "/data2/rw/home/LJSpeech-1.1/parallel_wavegan",
+            metafile_train: "metadata.txt",
+            metafile_val: null
         }
     ]
 
@@ -26,8 +26,6 @@ audio:
   preemphasis: 0.98
   min_level_db: -100   
   ref_level_db: 20   
-  power: 1.5
-  griffin_lim_iters: 60
   signal_norm: true
   symmetric_norm: true
   max_norm: 4
@@ -35,7 +33,6 @@ audio:
   mel_fmin: 0.0
   mel_fmax: 8000.0
   do_trim_silence: false
-  format: "npy"           # Feature file format. "npy" or "hdf5" is supported.
 
 ###########################################################
 #         GENERATOR NETWORK ARCHITECTURE SETTING          #
