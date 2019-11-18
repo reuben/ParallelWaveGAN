@@ -458,10 +458,6 @@ def main():
     """Run training process."""
     parser = argparse.ArgumentParser(
         description="Train Parallel WaveGAN (See detail in parallel_wavegan/bin/train.py).")
-    parser.add_argument("--train-dumpdir", type=str, required=True,
-                        help="directory including trainning data.")
-    # parser.add_argument("--dev-dumpdir", type=str, required=True,
-    #                     help="directory including development data.")
     parser.add_argument("--outdir", type=str, required=True,
                         help="directory to save checkpoints.")
     parser.add_argument("--config", type=str, required=True,
