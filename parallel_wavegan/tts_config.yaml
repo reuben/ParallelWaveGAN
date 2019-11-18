@@ -5,10 +5,14 @@
 # Compared to v1, this configuration starts to train discriminator from first step.
 
 datasets:
-  name: "ljspeech"
-  path: "/home/erogol/Data/LJSpeech-1.1/"
-  metafile_train: "metadata_train.csv"
-  metafile_val: "metadata_val.csv"
+    [
+        {
+            name: "tts_gen",
+            path: "/home/erogol/Data/LJSpeech-1.1/PWGAN_5233/",
+            metafile_train: "metadata_train.txt",
+            metafile_val: "metadata_val.txt"
+        }
+    ]
 
 ###########################################################
 #                FEATURE EXTRACTION SETTING               #

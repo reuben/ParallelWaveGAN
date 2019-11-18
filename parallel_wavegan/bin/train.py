@@ -31,7 +31,7 @@ try:
 except ImportError:
     from torch.nn.parallel import DistributedDataParallel
 
-from parallel_wavegan.datasets import AudioMelDataset
+from parallel_wavegan.datasets import AudioMelDataset, load_meta_data
 from parallel_wavegan.losses import MultiResolutionSTFTLoss
 from parallel_wavegan.models import ParallelWaveGANDiscriminator
 from parallel_wavegan.models import ParallelWaveGANGenerator
@@ -524,8 +524,7 @@ def main():
         logging.info(f"{key} = {value}")
 
     # load file ids
-    with open(f"{args.train_dumpdir}/metadata.txt", "r") as f:
-        metadata = [line.strip().split('|') for line in f.readlines()]
+    metadata_train, metadata_val = load_meta_data(config['datasets'])
 
     # get dataset
     if config["remove_short_samples"]:
@@ -546,14 +545,14 @@ def main():
     dataset = {
         "train": AudioMelDataset(
             root_dir=args.train_dumpdir,
-            file_ids=metadata[:-64],
+            file_ids=metadata_train,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),  # keep compatibilty
         ),
         "dev": AudioMelDataset(
             root_dir=args.train_dumpdir,
-            file_ids=metadata[-64:],
+            file_ids=metadata_val,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False)),
