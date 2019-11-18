@@ -77,15 +77,6 @@ discriminator_params:
         negative_slope: 0.2           # Alpha in LeakyReLU.
 
 ###########################################################
-#                   STFT LOSS SETTING                     #
-###########################################################
-stft_loss_params:
-    fft_sizes: [1024, 2048, 512]  # List of FFT size for STFT-based loss.
-    hop_sizes: [120, 240, 50]     # List of hop size for STFT-based loss
-    win_lengths: [600, 1200, 240] # List of window length for STFT-based loss.
-    window: "hann_window"         # Window function for STFT-based loss
-
-###########################################################
 #               ADVERSARIAL LOSS SETTING                  #
 ###########################################################
 lambda_adv: 4.0  # Loss balancing coefficient.

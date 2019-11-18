@@ -599,9 +599,15 @@ def main():
         model['generator'] = DistributedDataParallel(model['generator'])
         model['discriminator'] = DistributedDataParallel(model['discriminator'])
     # END DISTRIBUTED
+    stft_loss_params = {
+        "fft_sizes": [2 * ap.n_fft, ap.n_fft, ap.n_fft // 2],
+        "hop_sizes": [2 * ap.hop_length, ap.hop_length, ap.hop_length // 2],
+        "win_lengths": [2 * ap.win_length, ap.win_length, ap.win_length // 2],
+        "window": "hann_window"         # Window function for STFT-based loss
+    }
     criterion = {
         "stft": MultiResolutionSTFTLoss(
-            **config["stft_loss_params"]).to(device),
+            **stft_loss_params).to(device),
         "mse": torch.nn.MSELoss().to(device),
     }
     optimizer = {
