@@ -453,10 +453,6 @@ def main():
     """Run training process."""
     parser = argparse.ArgumentParser(
         description="Train Parallel WaveGAN (See detail in parallel_wavegan/bin/train.py).")
-    parser.add_argument("--train-dumpdir", type=str, required=True,
-                        help="directory including trainning data.")
-    # parser.add_argument("--dev-dumpdir", type=str, required=True,
-    #                     help="directory including development data.")
     parser.add_argument("--outdir", type=str, required=True,
                         help="directory to save checkpoints.")
     parser.add_argument("--config", type=str, required=True,
@@ -544,14 +540,14 @@ def main():
     #     raise ValueError("support only hdf5 or npy format.")
     dataset = {
         "train": AudioMelDataset(
-            root_dir=args.train_dumpdir,
+            root_dir=config['datasets'][0]['path'],
             file_ids=metadata_train,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),  # keep compatibilty
         ),
         "dev": AudioMelDataset(
-            root_dir=args.train_dumpdir,
+            root_dir=config['datasets'][0]['path'],
             file_ids=metadata_val,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
