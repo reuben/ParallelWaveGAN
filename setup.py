@@ -30,6 +30,7 @@ requirements = {
         "tqdm>=4.26.1",
         "kaldiio>=2.14.1",
         "h5py>=2.10.0",
+        "image",
     ],
     "setup": [
         "numpy",
