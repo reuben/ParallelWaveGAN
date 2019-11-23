@@ -8,7 +8,7 @@ datasets:
     [
         {
             name: "tts_gen",
-            path: "/data2/rw/home/LJSpeech-1.1/parallel_wavegan",
+            path: "/root/parallel_wavegan_trim_silence/",
             metafile_train: "metadata.txt",
             metafile_val: null
         }
