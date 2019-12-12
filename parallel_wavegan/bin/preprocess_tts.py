@@ -27,7 +27,8 @@ def process_file(path):
         f"{path} seems to be multi-channel signal."
     assert np.abs(wav).max() <= 1.0, \
         f"{path} seems to be different from 16 bit PCM."
-    # assert wav.shape[0] == ap.hop_length * mel.shape[1], f"{wav.shape[0]} vs {ap.hop_length * mel.shape[1]}"
+
+    assert mel.shape[1] * ap.hop_lengths == wav.shape[0]
     return mel.astype(np.float32), wav
 
 
