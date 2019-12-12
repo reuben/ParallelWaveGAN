@@ -8,7 +8,7 @@ datasets:
     [
         {
             name: "tts_gen",
-            path: "/data2/rw/home/LJSpeech-1.1/parallel_wavegan",
+            path: "/root/parallel_wavegan_trim_silence/",
             metafile_train: "metadata.txt",
             metafile_val: null
         }
@@ -23,7 +23,7 @@ audio:
   num_freq: 1025           # FFT size.
   frame_length_ms: 50            # Hop size.
   frame_shift_ms: 12.5         # Window length.
-  preemphasis: 0.98
+  preemphasis: 0.0
   min_level_db: -100   
   ref_level_db: 20   
   signal_norm: true
@@ -32,7 +32,7 @@ audio:
   clip_norm: true
   mel_fmin: 0.0
   mel_fmax: 8000.0
-  do_trim_silence: false
+  do_trim_silence: true
 
 ###########################################################
 #         GENERATOR NETWORK ARCHITECTURE SETTING          #
@@ -84,7 +84,7 @@ lambda_adv: 4.0  # Loss balancing coefficient.
 batch_size: 6              # Batch size.
 batch_max_steps: 27225     # Length of each audio in batch. Make sure dividable by hop_size.
 pin_memory: true           # Whether to pin memory in Pytorch DataLoader.
-num_workers: 0             # Number of workers in Pytorch DataLoader
+num_workers: 2             # Number of workers in Pytorch DataLoader
 remove_short_samples: true # Whether to remove samples the length of which are less than batch_max_steps.
 allow_cache: true
 

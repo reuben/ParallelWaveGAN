@@ -312,6 +312,7 @@ class Trainer(object):
 
             # plot figure and save it
             figname = os.path.join(dirname, f"{idx}.png")
+            fig = plt.figure()
             plt.subplot(2, 1, 1)
             plt.plot(y)
             plt.title("groundtruth speech")
@@ -321,6 +322,7 @@ class Trainer(object):
             plt.tight_layout()
             plt.savefig(figname)
             plt.close()
+            
 
             # save as wavfile
             y = np.clip(y, -1, 1)
@@ -332,6 +334,10 @@ class Trainer(object):
 
             if idx >= self.config["num_save_intermediate_results"]:
                 break
+
+        # plot the last instances on tb
+        self.writer.add_figure('speech comparison', fig, self.steps )
+        self.writer.add_audio('generated_audio', y_, self.steps, sample_rate=self.config["audio"]["sample_rate"])
 
     def _write_to_tensorboard(self, loss):
         """Write to tensorboard."""
