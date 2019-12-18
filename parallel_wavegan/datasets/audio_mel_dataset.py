@@ -92,7 +92,9 @@ class AudioMelDataset(Dataset):
 
     def audio_load_fn(self, file_path):
         wav =  self.ap.load_wav(file_path).astype('float32')
-            
+        if self.augment:
+            amplitude = np.random.uniform(low=0.3, high=1.0)
+            wav = wav * amplitude
         return wav
     
     def mel_load_fn(self, file_path):
