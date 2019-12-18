@@ -5,13 +5,15 @@
 
 """Dataset modules."""
 
+import os
 import logging
+import glob
 
 from multiprocessing import Manager
 
 import numpy as np
-
 from torch.utils.data import Dataset
+from sklearn.preprocessing import StandardScaler
 
 from parallel_wavegan.utils import find_files
 from parallel_wavegan.utils import read_hdf5
