@@ -34,6 +34,7 @@ audio:
   mel_fmin: 0.0
   mel_fmax: 8000.0
   do_trim_silence: true
+  sound_norm: true
 
 ###########################################################
 #         GENERATOR NETWORK ARCHITECTURE SETTING          #
