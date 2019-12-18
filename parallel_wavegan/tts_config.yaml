@@ -9,7 +9,7 @@ datasets:
     [
         {
             name: "tts_gen",
-            path: "/root/parallel_wavegan_trim_silence/",
+            path: "../ljspeech_feats/",
             metafile_train: "metadata.txt",
             metafile_val: null,
             stats: "../ljspeech_feats/stats.npy"
