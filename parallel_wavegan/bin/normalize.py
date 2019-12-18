@@ -66,16 +66,9 @@ def main():
         os.makedirs(args.dumpdir)
 
     # get dataset
-    if config["format"] == "hdf5":
-        audio_query, mel_query = "*.h5", "*.h5"
-        audio_load_fn = lambda x: read_hdf5(x, "wave")  # NOQA
-        mel_load_fn = lambda x: read_hdf5(x, "feats")  # NOQA
-    elif config["format"] == "npy":
-        audio_query, mel_query = "*-wave.npy", "*-feats.npy"
-        audio_load_fn = np.load
-        mel_load_fn = np.load
-    else:
-        raise ValueError("support only hdf5 or npy format.")
+    audio_query, mel_query = "*-wave.npy", "*-feats.npy"
+    audio_load_fn = np.load
+    mel_load_fn = np.load
     dataset = AudioMelDataset(
         root_dir=args.rootdir,
         audio_query=audio_query,
@@ -88,14 +81,8 @@ def main():
 
     # restore scaler
     scaler = StandardScaler()
-    if config["format"] == "hdf5":
-        scaler.mean_ = read_hdf5(args.stats, "mean")
-        scaler.scale_ = read_hdf5(args.stats, "scale")
-    elif config["format"] == "npy":
-        scaler.mean_ = np.load(args.stats)[0]
-        scaler.scale_ = np.load(args.stats)[1]
-    else:
-        raise ValueError("support only hdf5 or npy format.")
+    scaler.mean_ = np.load(args.stats)[0]
+    scaler.scale_ = np.load(args.stats)[1]
 
     def _process_single_file(data):
         # parse inputs
@@ -105,18 +92,10 @@ def main():
         mel = scaler.transform(mel)
 
         # save
-        if config["format"] == "hdf5":
-            write_hdf5(os.path.join(args.dumpdir, f"{os.path.basename(audio_name)}"),
-                       "wave", audio.astype(np.float32))
-            write_hdf5(os.path.join(args.dumpdir, f"{os.path.basename(mel_name)}"),
-                       "feats", mel.astype(np.float32))
-        elif config["format"] == "npy":
-            np.save(os.path.join(args.dumpdir, f"{os.path.basename(audio_name)}"),
-                    audio.astype(np.float32), allow_pickle=False)
-            np.save(os.path.join(args.dumpdir, f"{os.path.basename(mel_name)}"),
-                    mel.astype(np.float32), allow_pickle=False)
-        else:
-            raise ValueError("support only hdf5 or npy format.")
+        np.save(os.path.join(args.dumpdir, f"{os.path.basename(audio_name)}"),
+                audio.astype(np.float32), allow_pickle=False)
+        np.save(os.path.join(args.dumpdir, f"{os.path.basename(mel_name)}"),
+                mel.astype(np.float32), allow_pickle=False)
 
     # process in parallel
     Parallel(n_jobs=args.n_jobs, verbose=args.verbose)(
