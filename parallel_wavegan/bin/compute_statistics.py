@@ -61,14 +61,8 @@ def main():
         os.makedirs(args.dumpdir)
 
     # get dataset
-    if config["format"] == "hdf5":
-        mel_query = "*.h5"
-        mel_load_fn = lambda x: read_hdf5(x, "feats")  # NOQA
-    elif config["format"] == "npy":
-        mel_query = "*-feats.npy"
-        mel_load_fn = np.load
-    else:
-        raise ValueError("support only hdf5 or npy format.")
+    mel_query = "*.npy"
+    mel_load_fn = np.load
     dataset = MelDataset(
         args.rootdir,
         mel_query=mel_query,
@@ -80,12 +74,8 @@ def main():
     for mel in tqdm(dataset):
         scaler.partial_fit(mel)
 
-    if config["format"] == "hdf5":
-        write_hdf5(os.path.join(args.dumpdir, "stats.h5"), "mean", scaler.mean_.astype(np.float32))
-        write_hdf5(os.path.join(args.dumpdir, "stats.h5"), "scale", scaler.scale_.astype(np.float32))
-    else:
-        stats = np.stack([scaler.mean_, scaler.scale_], axis=0)
-        np.save(os.path.join(args.dumpdir, "stats.npy"), stats.astype(np.float32), allow_pickle=False)
+    stats = np.stack([scaler.mean_, scaler.scale_], axis=0)
+    np.save(os.path.join(args.dumpdir, "stats.npy"), stats.astype(np.float32), allow_pickle=False)
 
 
 if __name__ == "__main__":
