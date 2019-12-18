@@ -92,6 +92,7 @@ class AudioMelDataset(Dataset):
 
     def audio_load_fn(self, file_path):
         wav =  self.ap.load_wav(file_path).astype('float32')
+            
         return wav
     
     def mel_load_fn(self, file_path):
