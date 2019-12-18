@@ -28,15 +28,13 @@ class AudioMelDataset(Dataset):
                  mel_length_threshold=None,
                  return_filename=False,
                  allow_cache=False,
+                 stats=None
                  ):
         """Initialize dataset.
 
         Args:
             root_dir (str): Root directory including dumped files.
-            audio_query (str): Query to find audio files in root_dir.
-            mel_query (str): Query to find feature files in root_dir.
-            audio_load_fn (func): Function to load audio file.
-            mel_load_fn (func): Function to load feature file.
+            file_ids (str): List of files, each item [<wav_file>, <mel_file>].
             audio_length_threshold (int): Threshold to remove short audio files.
             mel_length_threshold (int): Threshold to remove short feature files.
             return_filename (bool): Whether to return the filename with arrays.
@@ -47,6 +45,15 @@ class AudioMelDataset(Dataset):
         # find all of audio and mel files
         audio_files = [file_id[0] for file_id in file_ids]
         mel_files = [file_id[1] for file_id in file_ids]
+
+        # set normalizer
+        if stats is not None:
+            print(f"Mean-Var normalizer is active")
+            self.scaler = StandardScaler()
+            self.scaler.mean_ = np.load(stats)[0]
+            self.scaler.scale_ = np.load(stats)[1]
+        else:
+            self.scaler = stats
 
         # filter by threshold
         if audio_length_threshold is not None:
@@ -83,6 +90,7 @@ class AudioMelDataset(Dataset):
 
     def audio_load_fn(self, file_path):
         wav =  self.ap.load_wav(file_path).astype('float32')
+            
         return wav
     
     def mel_load_fn(self, file_path):
@@ -106,6 +114,9 @@ class AudioMelDataset(Dataset):
 
         audio = self.audio_load_fn(self.audio_files[idx])
         mel = self.mel_load_fn(self.mel_files[idx])
+
+        if self.scaler:
+            mel = self.scaler.transform(mel)
 
         audio = np.pad(audio, (0, self.ap.n_fft), mode="edge")
         audio = audio[:len(mel) * self.ap.hop_length]
@@ -217,7 +228,7 @@ class MelDataset(Dataset):
 
     def __init__(self,
                  root_dir,
-                 mel_query="*-feats.npy",
+                 mel_query="*.npy",
                  mel_length_threshold=None,
                  mel_load_fn=np.load,
                  return_filename=False,
@@ -235,7 +246,7 @@ class MelDataset(Dataset):
 
         """
         # find all of the mel files
-        mel_files = sorted(find_files(root_dir, mel_query))
+        mel_files = sorted(glob.glob(os.path.join(root_dir, mel_query)))
 
         # filter by threshold
         if mel_length_threshold is not None:
@@ -281,7 +292,7 @@ class MelDataset(Dataset):
         else:
             if self.allow_cache:
                 self.caches[idx] = mel
-            return mel
+            return mel.T
 
     def __len__(self):
         """Return dataset length.
