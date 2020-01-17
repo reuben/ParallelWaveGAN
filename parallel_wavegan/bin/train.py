@@ -540,13 +540,16 @@ def main():
             file_ids=metadata_train,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
-            allow_cache=config.get("allow_cache", False)),  # keep compatibility
+            allow_cache=config.get("allow_cache", False),  # keep compatibilty
+            augment=True
+        ),
         "dev": AudioMelDataset(
             root_dir=config['datasets'][0]['path'],
             file_ids=metadata_val,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
-            allow_cache=config.get("allow_cache", False)),
+            allow_cache=config.get("allow_cache", False),
+            augment=False,)
     }
 
     # get data loader

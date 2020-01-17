@@ -30,7 +30,8 @@ class AudioMelDataset(Dataset):
                  mel_length_threshold=None,
                  return_filename=False,
                  allow_cache=False,
-                 stats=None
+                 stats=None,
+                 augment=True
                  ):
         """Initialize dataset.
 
@@ -43,6 +44,7 @@ class AudioMelDataset(Dataset):
             allow_cache (bool): Whether to allow cache of the loaded files.
 
         """
+        self.augment = augment
         self.ap = ap
         # find all of audio and mel files
         audio_files = [file_id[0] for file_id in file_ids]
