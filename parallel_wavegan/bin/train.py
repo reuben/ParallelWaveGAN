@@ -382,10 +382,10 @@ class Collater(object):
     """Customized collater for Pytorch DataLoader in training."""
 
     def __init__(self,
-                 batch_max_steps=20480,
-                 hop_size=256,
-                 aux_context_window=2,
-                 use_noise_input=False,
+                 batch_max_steps,
+                 hop_size,
+                 aux_context_window,
+                 use_noise_input
                  ):
         """Initialize customized collater for PyTorch DataLoader.
 
@@ -433,7 +433,7 @@ class Collater(object):
                       start_frame + self.aux_context_window + self.batch_max_frames]
                 self._assert_ready_for_upsampling(y, c, self.hop_size, self.aux_context_window)
             else:
-                logging.warn(f"Removed short sample from batch (length={len(x)}).")
+                print(f" [!] Removed short sample from batch (length={len(x)}).")
                 continue
             y_batch += [y.astype(np.float32).reshape(-1, 1)]  # [(T, 1), (T, 1), ...]
             c_batch += [c.astype(np.float32)]  # [(T' C), (T' C), ...]
