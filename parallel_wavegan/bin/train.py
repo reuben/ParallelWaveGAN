@@ -379,9 +379,9 @@ class Collater(object):
     """Customized collater for Pytorch DataLoader in training."""
 
     def __init__(self,
-                 batch_max_steps=20480,
-                 hop_size=256,
-                 aux_context_window=2
+                 batch_max_steps,
+                 hop_size,
+                 aux_context_window
                  ):
         """Initialize customized collater for PyTorch DataLoader.
 
@@ -427,7 +427,7 @@ class Collater(object):
                       start_frame + self.aux_context_window + self.batch_max_frames]
                 self._assert_ready_for_upsampling(y, c, self.hop_size, self.aux_context_window)
             else:
-                logging.warn(f"Removed short sample from batch (length={len(x)}).")
+                print(f" [!] Removed short sample from batch (length={len(x)}).")
                 continue
             y_batch += [y.astype(np.float32).reshape(-1, 1)]  # [(T, 1), (T, 1), ...]
             c_batch += [c.astype(np.float32)]  # [(T' C), (T' C), ...]
@@ -436,9 +436,10 @@ class Collater(object):
         y_batch = torch.FloatTensor(np.array(y_batch)).transpose(2, 1)  # (B, 1, T)
         c_batch = torch.FloatTensor(np.array(c_batch)).transpose(2, 1)  # (B, C, T')
 
-        # Make the list of the length of input signals
-        input_lengths = torch.LongTensor(xlens)
-        return z_batch, c_batch, y_batch, input_lengths
+        # make input noise signal batch tensor
+        z_batch = torch.randn(y_batch.size())  # (B, 1, T)
+
+        return z_batch, c_batch, y_batch
 
     @staticmethod
     def _assert_ready_for_upsampling(x, c, hop_size, context_window):
