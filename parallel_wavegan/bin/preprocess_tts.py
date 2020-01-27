@@ -28,7 +28,8 @@ def process_file(path):
     assert np.abs(wav).max() <= 1.0, \
         f"{path} seems to be different from 16 bit PCM."
 
-    assert mel.shape[1] * ap.hop_lengths == wav.shape[0]
+    # gap when wav is not multiple of hop_length
+    assert mel.shape[1] * ap.hop_length == wav.shape[0] + ap.hop_length - gap, f'{mel.shape[1] * ap.hop_length} vs {wav.shape[0] + ap.hop_length + gap}'
     return mel.astype(np.float32), wav
 
 
