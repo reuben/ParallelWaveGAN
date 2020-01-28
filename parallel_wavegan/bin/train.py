@@ -551,7 +551,7 @@ def main():
             ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),  # keep compatibilty
-            augment=True
+            augment=config['augment']
         ),
         "dev": AudioMelDataset(
             root_dir=config['datasets'][0]['path'],
@@ -559,7 +559,7 @@ def main():
             ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),
-            augment=False,)
+            augment=config['augment'],)
     }
 
     # get data loader
