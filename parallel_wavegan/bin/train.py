@@ -50,6 +50,7 @@ class Trainer(object):
                  optimizer,
                  scheduler,
                  config,
+                 ap,
                  device=torch.device("cpu"),
                  ):
         """Initialize trainer.
@@ -74,6 +75,7 @@ class Trainer(object):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.config = config
+        self.ap = ap
         self.device = device
         self.writer = SummaryWriter(config["outdir"])
         self.finish_train = False
@@ -331,7 +333,26 @@ class Trainer(object):
             plt.tight_layout()
             plt.savefig(figname)
             plt.close()
-            
+
+            # plot spectrogram and save it
+            spectrogram = self.ap.melspectrogram(y)  # pylint: disable=protected-access
+            fig_spec = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+            spectrogram_ = self.ap.melspectrogram(y_)
+            fig_spec_ = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram_, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+            spectrogram_diff = abs(spectrogram - spectrogram_)
+            fig_spec_diff = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram_diff, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
 
             # save as wavfile
             y = np.clip(y, -1, 1)
@@ -346,6 +367,9 @@ class Trainer(object):
 
         # plot the last instances on tb
         self.writer.add_figure('speech comparison', fig, self.steps )
+        self.writer.add_figure('spectrogram/real', fig_spec, self.steps)
+        self.writer.add_figure('spectrogram/pred', fig_spec_, self.steps)
+        self.writer.add_figure('spectrogram/diff', fig_spec_diff, self.steps)
         self.writer.add_audio('generated_audio', y_, self.steps, sample_rate=self.config["audio"]["sample_rate"])
 
     def _write_to_tensorboard(self, loss):
@@ -679,6 +703,7 @@ def main():
         optimizer=optimizer,
         scheduler=scheduler,
         config=config,
+        ap=ap,
         device=device,
     )
 
