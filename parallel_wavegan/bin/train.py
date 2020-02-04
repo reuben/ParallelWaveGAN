@@ -23,18 +23,13 @@ import yaml
 
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-try:
-    from apex.parallel import DistributedDataParallel
-except ImportError:
-    from torch.nn.parallel import DistributedDataParallel
+import parallel_wavegan
+import parallel_wavegan.models
 
 from parallel_wavegan.datasets import AudioMelDataset, load_meta_data
 from parallel_wavegan.losses import MultiResolutionSTFTLoss
-from parallel_wavegan.models import ParallelWaveGANDiscriminator
-from parallel_wavegan.models import ParallelWaveGANGenerator
 from parallel_wavegan.optimizers import RAdam
 from parallel_wavegan.utils import read_hdf5
 from parallel_wavegan.utils.audio import AudioProcessor
@@ -55,6 +50,7 @@ class Trainer(object):
                  optimizer,
                  scheduler,
                  config,
+                 ap,
                  device=torch.device("cpu"),
                  ):
         """Initialize trainer.
@@ -79,6 +75,7 @@ class Trainer(object):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.config = config
+        self.ap = ap
         self.device = device
         self.writer = SummaryWriter(config["outdir"])
         self.finish_train = False
@@ -100,7 +97,7 @@ class Trainer(object):
                 break
 
         self.tqdm.close()
-        logging.info("finished training.")
+        logging.info("Finished training.")
 
     def save_checkpoint(self, checkpoint_path):
         """Save checkpoint.
@@ -110,10 +107,6 @@ class Trainer(object):
 
         """
         state_dict = {
-            "model": {
-                "generator": self.model["generator"].state_dict(),
-                "discriminator": self.model["discriminator"].state_dict(),
-            },
             "optimizer": {
                 "generator": self.optimizer["generator"].state_dict(),
                 "discriminator": self.optimizer["discriminator"].state_dict(),
@@ -125,6 +118,17 @@ class Trainer(object):
             "steps": self.steps,
             "epochs": self.epochs,
         }
+        if self.config["distributed"]:
+            state_dict["model"] = {
+                "generator": self.model["generator"].module.state_dict(),
+                "discriminator": self.model["discriminator"].module.state_dict(),
+            }
+        else:
+            state_dict["model"] = {
+                "generator": self.model["generator"].state_dict(),
+                "discriminator": self.model["discriminator"].state_dict(),
+            }
+
         if not os.path.exists(os.path.dirname(checkpoint_path)):
             os.makedirs(os.path.dirname(checkpoint_path))
         torch.save(state_dict, checkpoint_path)
@@ -136,11 +140,15 @@ class Trainer(object):
             checkpoint_path (str): Checkpoint path to be loaded.
 
         """
-        state_dict = torch.load(checkpoint_path)
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
         self.steps = state_dict["steps"]
         self.epochs = state_dict["epochs"]
-        self.model["generator"].load_state_dict(state_dict["model"]["generator"])
-        self.model["discriminator"].load_state_dict(state_dict["model"]["discriminator"])
+        if self.config["distributed"]:
+            self.model["generator"].module.load_state_dict(state_dict["model"]["generator"])
+            self.model["discriminator"].module.load_state_dict(state_dict["model"]["discriminator"])
+        else:
+            self.model["generator"].load_state_dict(state_dict["model"]["generator"])
+            self.model["discriminator"].load_state_dict(state_dict["model"]["discriminator"])
         self.optimizer["generator"].load_state_dict(state_dict["optimizer"]["generator"])
         self.optimizer["discriminator"].load_state_dict(state_dict["optimizer"]["discriminator"])
         self.scheduler["generator"].load_state_dict(state_dict["scheduler"]["generator"])
@@ -150,9 +158,9 @@ class Trainer(object):
         """Train model one step."""
         # parse batch
         batch = [b.to(self.device) for b in batch]
-        z, c, y, _ = batch
+        z, c, y = batch
 
-        # calculate loss for generator
+        # calculate generator loss
         y_ = self.model["generator"](z, c)
         y, y_ = y.squeeze(1), y_.squeeze(1)
         sc_loss, mag_loss = self.criterion["stft"](y_, y)
@@ -200,6 +208,7 @@ class Trainer(object):
         # update counts
         self.steps += 1
         self.tqdm.update(1)
+        self._check_train_finish()
 
     def _train_epoch(self):
         """Train model one epoch."""
@@ -208,11 +217,10 @@ class Trainer(object):
             self._train_step(batch)
 
             # check interval
-            if self.config['rank'] == 0:
+            if self.config["rank"] == 0:
                 self._check_log_interval()
                 self._check_eval_interval()
                 self._check_save_interval()
-                self._check_train_finish()
 
             # check whether training is finished
             if self.finish_train:
@@ -221,14 +229,14 @@ class Trainer(object):
         # update
         self.epochs += 1
         self.train_steps_per_epoch = train_steps_per_epoch
-        logging.info(f"(steps: {self.steps}) finished {self.epochs} epoch training "
+        logging.info(f"(Steps: {self.steps}) Finished {self.epochs} epoch training "
                      f"({self.train_steps_per_epoch} steps per epoch).")
 
     def _eval_step(self, batch):
         """Evaluate model one step."""
         # parse batch
         batch = [b.to(self.device) for b in batch]
-        z, c, y, _ = batch
+        z, c, y = batch
 
         # calculate generator loss
         y_ = self.model["generator"](z, c)
@@ -239,7 +247,7 @@ class Trainer(object):
         aux_loss = sc_loss + mag_loss
         gen_loss = aux_loss + self.config["lambda_adv"] * adv_loss
 
-        # train discriminator
+        # calculate discriminator loss
         p = self.model["discriminator"](y.unsqueeze(1)).squeeze(1)
         p_ = self.model["discriminator"](y_.unsqueeze(1)).squeeze(1)
         real_loss = self.criterion["mse"](p, p.new_ones(p.size()))
@@ -257,7 +265,7 @@ class Trainer(object):
 
     def _eval_epoch(self):
         """Evaluate model one epoch."""
-        logging.info(f"(step: {self.steps}) start evaluation.")
+        logging.info(f"(Steps: {self.steps}) Start evaluation.")
         # change mode
         for key in self.model.keys():
             self.model[key].eval()
@@ -272,13 +280,13 @@ class Trainer(object):
             if eval_steps_per_epoch == 1:
                 self._genearete_and_save_intermediate_result(batch)
 
-        logging.info(f"(step: {self.steps}) finished evaluation "
+        logging.info(f"(Steps: {self.steps}) Finished evaluation "
                      f"({eval_steps_per_epoch} steps per epoch).")
 
         # average loss
         for key in self.total_eval_loss.keys():
             self.total_eval_loss[key] /= eval_steps_per_epoch
-            logging.info(f"(steps: {self.steps}) {key} = {self.total_eval_loss[key]:.4f}.")
+            logging.info(f"(Steps: {self.steps}) {key} = {self.total_eval_loss[key]:.4f}.")
 
         # record
         self._write_to_tensorboard(self.total_eval_loss)
@@ -298,7 +306,7 @@ class Trainer(object):
         # generate
         with torch.no_grad():
             batch = [b.to(self.device) for b in batch]
-            z_batch, c_batch, y_batch, _ = batch
+            z_batch, c_batch, y_batch = batch
             y_batch_ = self.model["generator"](z_batch, c_batch)
 
         # check directory
@@ -324,6 +332,26 @@ class Trainer(object):
             plt.close()
             
 
+            # plot spectrogram and save it
+            spectrogram = self.ap.melspectrogram(y)  # pylint: disable=protected-access
+            fig_spec = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+            spectrogram_ = self.ap.melspectrogram(y_)
+            fig_spec_ = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram_, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+            spectrogram_diff = abs(spectrogram - spectrogram_)
+            fig_spec_diff = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram_diff, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+
             # save as wavfile
             y = np.clip(y, -1, 1)
             y_ = np.clip(y_, -1, 1)
@@ -337,6 +365,9 @@ class Trainer(object):
 
         # plot the last instances on tb
         self.writer.add_figure('speech comparison', fig, self.steps )
+        self.writer.add_figure('spectrogram/real', fig_spec, self.steps)
+        self.writer.add_figure('spectrogram/pred', fig_spec_, self.steps)
+        self.writer.add_figure('spectrogram/diff', fig_spec_diff, self.steps)
         self.writer.add_audio('generated_audio', y_, self.steps, sample_rate=self.config["audio"]["sample_rate"])
 
     def _write_to_tensorboard(self, loss):
@@ -348,7 +379,7 @@ class Trainer(object):
         if self.steps % self.config["save_interval_steps"] == 0:
             self.save_checkpoint(
                 os.path.join(self.config["outdir"], f"checkpoint-{self.steps}steps.pkl"))
-            logging.info(f"saved checkpoint @ {self.steps} steps.")
+            logging.info(f"Successfully saved checkpoint @ {self.steps} steps.")
 
     def _check_eval_interval(self):
         if self.steps % self.config["eval_interval_steps"] == 0:
@@ -358,7 +389,7 @@ class Trainer(object):
         if self.steps % self.config["log_interval_steps"] == 0:
             for key in self.total_train_loss.keys():
                 self.total_train_loss[key] /= self.config["log_interval_steps"]
-                logging.info(f"(steps: {self.steps}) {key} = {self.total_train_loss[key]:.4f}.")
+                logging.info(f"(Steps: {self.steps}) {key} = {self.total_train_loss[key]:.4f}.")
             self._write_to_tensorboard(self.total_train_loss)
 
             # reset
@@ -373,9 +404,9 @@ class Collater(object):
     """Customized collater for Pytorch DataLoader in training."""
 
     def __init__(self,
-                 batch_max_steps=20480,
-                 hop_size=256,
-                 aux_context_window=2
+                 batch_max_steps,
+                 hop_size,
+                 aux_context_window
                  ):
         """Initialize customized collater for PyTorch DataLoader.
 
@@ -403,56 +434,41 @@ class Collater(object):
             Tensor: Gaussian noise batch (B, 1, T).
             Tensor: Auxiliary feature batch (B, C, T'), where T = (T' - 2 * aux_context_window) * hop_size
             Tensor: Target signal batch (B, 1, T).
-            LongTensor: Input length batch (B,)
 
         """
-        # Time resolution adjustment
-        new_batch = []
+        # time resolution check
+        y_batch, c_batch = [], []
         for idx in range(len(batch)):
             x, c = batch[idx]
             self._assert_ready_for_upsampling(x, c, self.hop_size, 0)
             if len(c) - 2 * self.aux_context_window > self.batch_max_frames:
+                # randomly pickup with the batch_max_steps length of the part
                 interval_start = self.aux_context_window
                 interval_end = len(c) - self.batch_max_frames - self.aux_context_window
                 start_frame = np.random.randint(interval_start, interval_end)
                 start_step = start_frame * self.hop_size
-                x = x[start_step: start_step + self.batch_max_steps]
+                y = x[start_step: start_step + self.batch_max_steps]
                 c = c[start_frame - self.aux_context_window:
                       start_frame + self.aux_context_window + self.batch_max_frames]
-                self._assert_ready_for_upsampling(x, c, self.hop_size, self.aux_context_window)
+                self._assert_ready_for_upsampling(y, c, self.hop_size, self.aux_context_window)
             else:
-                logging.warn(f"removed short sample from batch (length={len(x)}).")
+                print(f" [!] Removed short sample from batch (length={len(x)}).")
                 continue
-            new_batch.append((x, c))
-        batch = new_batch
+            y_batch += [y.astype(np.float32).reshape(-1, 1)]  # [(T, 1), (T, 1), ...]
+            c_batch += [c.astype(np.float32)]  # [(T' C), (T' C), ...]
 
-        # Make padded target signal batch
-        xlens = [len(b[0]) for b in batch]
-        max_olen = max(xlens)
-        y_batch = np.array([self._pad_2darray(b[0].reshape(-1, 1), max_olen) for b in batch], dtype=np.float32)
-        y_batch = torch.FloatTensor(y_batch).transpose(2, 1)
+        # convert each batch to tensor, asuume that each item in batch has the same length
+        y_batch = torch.FloatTensor(np.array(y_batch)).transpose(2, 1)  # (B, 1, T)
+        c_batch = torch.FloatTensor(np.array(c_batch)).transpose(2, 1)  # (B, C, T')
 
-        # Make padded conditional auxiliary feature batch
-        clens = [len(b[1]) for b in batch]
-        max_clen = max(clens)
-        c_batch = np.array([self._pad_2darray(b[1], max_clen) for b in batch], dtype=np.float32)
-        c_batch = torch.FloatTensor(c_batch).transpose(2, 1)
+        # make input noise signal batch tensor
+        z_batch = torch.randn(y_batch.size())  # (B, 1, T)
 
-        # Make input noise signal batch
-        z_batch = torch.randn(y_batch.size())
-
-        # Make the list of the length of input signals
-        input_lengths = torch.LongTensor(xlens)
-        return z_batch, c_batch, y_batch, input_lengths
+        return z_batch, c_batch, y_batch
 
     @staticmethod
     def _assert_ready_for_upsampling(x, c, hop_size, context_window):
         assert len(x) == (len(c) - 2 * context_window) * hop_size, f"{len(x)} vs {(len(c) - 2 * context_window) * hop_size}"
-
-    @staticmethod
-    def _pad_2darray(x, max_len, b_pad=0, constant_values=0):
-        return np.pad(x, [(b_pad, max_len - len(x) - b_pad), (0, 0)],
-                      mode="constant", constant_values=constant_values)
 
 
 def main():
@@ -467,30 +483,30 @@ def main():
                         help="checkpoint file path to resume training. (default=\"\")")
     parser.add_argument("--verbose", type=int, default=1,
                         help="logging level. higher is more logging. (default=1)")
-    # DISTRIBUTED
-    parser.add_argument("--world-size", default=1, type=int)
-    parser.add_argument("--rank", "--local_rank", default=0, type=int)
-    # END DISTRIBUTED
+    parser.add_argument("--rank", "--local_rank", default=0, type=int,
+                        help="rank for distributed training. no need to explictly specify.")
     args = parser.parse_args()
 
-    # DISTRIBUTED
     args.distributed = False
     if not torch.cuda.is_available():
         device = torch.device("cpu")
     else:
+        device = torch.device("cuda")
+        # effective when using fixed size inputs
+        # see https://discuss.pytorch.org/t/what-does-torch-backends-cudnn-benchmark-do/5936
+        torch.backends.cudnn.benchmark = True
         torch.cuda.set_device(args.rank)
-        args.distributed = torch.cuda.device_count() > 1
+        # setup for distributed training
+        # see example: https://github.com/NVIDIA/apex/tree/master/examples/simple/distributed
+        if "WORLD_SIZE" in os.environ:
+            args.world_size = int(os.environ["WORLD_SIZE"])
+            args.distributed = args.world_size > 1
         if args.distributed:
-            os.environ['MASTER_ADDR'] = '127.0.0.1'
-            os.environ['MASTER_PORT'] = '29501'
-            torch.distributed.init_process_group(backend='nccl',
-                                                 rank=args.rank,
-                                                 world_size=args.world_size,
-                                                 init_method='env://')
-    # END DISTRIBUTED
+            torch.distributed.init_process_group(backend="nccl", init_method="env://")
 
+    # suppress logging for distributed training
     if args.rank != 0:
-        sys.stdout = open(os.devnull, 'w')
+        sys.stdout = open(os.devnull, "w")
 
     # set logger
     if args.verbose > 1:
@@ -505,7 +521,7 @@ def main():
         logging.basicConfig(
             level=logging.WARN, stream=sys.stdout,
             format="%(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s")
-        logging.warning('skip DEBUG/INFO messages')
+        logging.warning("Skip DEBUG/INFO messages")
 
     # check directory existence
     if not os.path.exists(args.outdir):
@@ -551,29 +567,37 @@ def main():
             ap=ap,
             mel_length_threshold=mel_length_threshold,
             allow_cache=config.get("allow_cache", False),  # keep compatibilty
+            augment=config['augment']
         ),
         "dev": AudioMelDataset(
             root_dir=config['datasets'][0]['path'],
             file_ids=metadata_val,
             ap=ap,
             mel_length_threshold=mel_length_threshold,
-            allow_cache=config.get("allow_cache", False)),
+            allow_cache=config.get("allow_cache", False),
+            augment=config['augment'],)
     }
 
     # get data loader
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
     collater = Collater(
         batch_max_steps=config["batch_max_steps"],
         hop_size=config["hop_size"],
         aux_context_window=config["generator_params"]["aux_context_window"],
     )
-    train_sampler = DistributedSampler(dataset['train'], args.world_size, args.rank, shuffle=True)\
-        if args.distributed else None
-    dev_sampler = DistributedSampler(dataset['dev'], args.world_size, args.rank, shuffle=False)\
-        if args.distributed else None
+    train_sampler, dev_sampler = None, None
+    if args.distributed:
+        # setup sampler for distributed training
+        from torch.utils.data.distributed import DistributedSampler
+        train_sampler = DistributedSampler(
+            dataset=dataset["train"],
+            num_replicas=args.world_size,
+            rank=args.rank,
+            shuffle=True)
+        dev_sampler = DistributedSampler(
+            dataset=dataset["dev"],
+            num_replicas=args.world_size,
+            rank=args.rank,
+            shuffle=False)
     data_loader = {
         "train": DataLoader(
             dataset=dataset["train"],
@@ -594,10 +618,20 @@ def main():
     }
 
     # define models and optimizers
+    generator_class = getattr(
+        parallel_wavegan.models,
+        # keep config compatibility
+        config.get("generator_type", "ParallelWaveGANGenerator")
+    )
+    discriminator_class = getattr(
+        parallel_wavegan.models,
+        # keep config compatibility
+        config.get("discriminator_type", "ParallelWaveGANDiscriminator")
+    )
     model = {
-        "generator": ParallelWaveGANGenerator(
+        "generator": generator_class(
             **config["generator_params"]).to(device),
-        "discriminator": ParallelWaveGANDiscriminator(
+        "discriminator": discriminator_class(
             **config["discriminator_params"]).to(device),
     }
     # DISTRIBUTED
@@ -632,6 +666,14 @@ def main():
             optimizer=optimizer["discriminator"],
             **config["discriminator_scheduler_params"]),
     }
+    if args.distributed:
+        # wrap model for distributed training
+        try:
+            from apex.parallel import DistributedDataParallel
+        except ImportError:
+            raise ImportError("apex is not installed. please check https://github.com/NVIDIA/apex.")
+        model["generator"] = DistributedDataParallel(model["generator"])
+        model["discriminator"] = DistributedDataParallel(model["discriminator"])
     logging.info(model["generator"])
     logging.info(model["discriminator"])
 
@@ -645,21 +687,22 @@ def main():
         optimizer=optimizer,
         scheduler=scheduler,
         config=config,
+        ap=ap,
         device=device,
     )
 
     # resume from checkpoint
     if len(args.resume) != 0:
         trainer.load_checkpoint(args.resume)
-        logging.info(f"resumed from {args.resume}.")
+        logging.info(f"Successfully resumed from {args.resume}.")
 
     # run training loop
     try:
         trainer.run()
-    finally:
+    except KeyboardInterrupt:
         trainer.save_checkpoint(
             os.path.join(config["outdir"], f"checkpoint-{trainer.steps}steps.pkl"))
-        logging.info(f"successfully saved checkpoint @ {trainer.steps}steps.")
+        logging.info(f"Successfully saved checkpoint @ {trainer.steps}steps.")
 
 
 if __name__ == "__main__":

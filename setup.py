@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""Setup Parallel WaveGAN libarary."""
+
 import os
 import pip
 import sys
@@ -20,7 +22,7 @@ if LooseVersion(pip.__version__) < LooseVersion("19"):
 
 requirements = {
     "install": [
-        "torch",
+        "torch>=1.0.1",
         "setuptools>=38.5.1",
         "librosa>=0.7.0",
         "soundfile>=0.10.2",
@@ -61,7 +63,7 @@ extras_require = {k: v for k, v in requirements.items()
 
 dirname = os.path.dirname(__file__)
 setup(name="parallel_wavegan",
-      version="0.2.3",
+      version="0.2.7.post1",
       url="http://github.com/kan-bayashi/ParallelWaveGAN",
       author="Tomoki Hayashi",
       author_email="hayashi.tomoki@g.sp.m.is.nagoya-u.ac.jp",

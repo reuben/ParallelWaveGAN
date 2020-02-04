@@ -181,6 +181,16 @@ class AudioProcessor(object):
         mel = self._normalize(S)
         return mel
 
+    def padding_correction(self, x, fsize, fshift, pad_both_sides=False):
+        '''Correct librosa padding in spec. computation'''
+        pad = (x.shape[0] // self.hop_length + 1) * self.hop_length - x.shape[0]
+        if pad_both_sides:
+            l_pad, r_pad = pad // 2, pad // 2 + pad % 2			
+        else:
+            l_pad, r_pad = 0, pad
+        x_padded = np.pad(x, (l_pad, r_pad), mode='constant', constant_values=0.)
+        return x_padded
+
     def _griffin_lim(self, S):
         angles = np.exp(2j * np.pi * np.random.rand(*S.shape))
         S_complex = np.abs(S).astype(np.complex)
@@ -196,6 +206,7 @@ class AudioProcessor(object):
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
+            pad_mode='constant'
         )
 
     def _istft(self, y):
@@ -246,7 +257,7 @@ class AudioProcessor(object):
                 print(f' [!] File cannot be trimmed for silence - {filename}')
         assert self.sample_rate == sr, "%s vs %s"%(self.sample_rate, sr)
         if self.sound_norm:
-            x = x / x.max() * 0.9
+            x = x / abs(x).max() * 0.9
         return x
 
     @staticmethod
