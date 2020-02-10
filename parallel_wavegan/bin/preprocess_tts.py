@@ -29,6 +29,7 @@ def process_file(path):
         f"{path} seems to be different from 16 bit PCM."
 
     # gap when wav is not multiple of hop_length
+    gap = wav.shape[0] % ap.hop_length
     assert mel.shape[1] * ap.hop_length == wav.shape[0] + ap.hop_length - gap, f'{mel.shape[1] * ap.hop_length} vs {wav.shape[0] + ap.hop_length + gap}'
     return mel.astype(np.float32), wav
 

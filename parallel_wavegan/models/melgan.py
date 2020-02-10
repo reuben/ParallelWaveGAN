@@ -56,6 +56,9 @@ class MelGANGenerator(torch.nn.Module):
         """
         super(MelGANGenerator, self).__init__()
 
+        # class attributes
+        self.upsample_scales = upsample_scales
+
         # check hyper parameters is valid
         assert not use_causal_conv, "Not supported yet."
         assert channels >= np.prod(upsample_scales)
@@ -127,6 +130,25 @@ class MelGANGenerator(torch.nn.Module):
 
         """
         return self.melgan(c)
+
+    @torch.no_grad()
+    def inference(self, c, hop_size):
+        """Calculate forward propagation.
+
+        Args:
+            c (Tensor): Input tensor (B, channels, T).
+
+        Returns:
+            Tensor: Output tensor (B, 1, T ** prod(upsample_scales)).
+
+        """
+        pad_size = 2
+        if not isinstance(c, torch.FloatTensor): 
+            # B x D x T
+            c = torch.FloatTensor(c).unsqueeze(0).transpose(2, 1)
+        c = c.to(self.melgan[1].weight.device)
+        c = torch.nn.functional.pad(c, (pad_size, pad_size), 'replicate')
+        return self.melgan(c).squeeze()
 
     def remove_weight_norm(self):
         """Remove weight normalization module from all of the layers."""

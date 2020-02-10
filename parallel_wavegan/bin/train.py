@@ -655,6 +655,10 @@ def main():
         model['generator'] = DistributedDataParallel(model['generator'])
         model['discriminator'] = DistributedDataParallel(model['discriminator'])
     # END DISTRIBUTED
+
+    # check upsample scales vs hop size
+    assert np.prod(model['generator'].upsample_scales) == ap.hop_length, " [!] upsample_scales needs to align hop_size"
+
     stft_loss_params = {
         "fft_sizes": [2 * ap.n_fft, ap.n_fft, ap.n_fft // 2],
         "hop_sizes": [2 * ap.hop_length, ap.hop_length, ap.hop_length // 2],

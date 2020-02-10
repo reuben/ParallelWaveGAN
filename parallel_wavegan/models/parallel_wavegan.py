@@ -70,6 +70,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
         self.stacks = stacks
         self.kernel_size = kernel_size
         self.aux_context_window = aux_context_window
+        self.upsample_scales = upsample_params['upsample_scales']
 
         # check the number of layers and stacks
         assert layers % stacks == 0
@@ -160,7 +161,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
 
         return x
 
-    
+    @torch.no_grad()
     def inference(self, c, hop_size, fold_num=1):
         """Calculate forward propagation.
         Args:
@@ -170,45 +171,43 @@ class ParallelWaveGANGenerator(torch.nn.Module):
         Returns:
             Tensor: Output tensor (B, out_channels, T)
         """
-        with torch.no_grad():
-            pad_size = self.aux_context_window
-            if not isinstance(c, torch.FloatTensor): 
-                # B x D x T
-                c = torch.FloatTensor(c).unsqueeze(0).transpose(2, 1)
-            c = c.to(self.first_conv.weight.device)
+        pad_size = self.aux_context_window
+        if not isinstance(c, torch.FloatTensor): 
+            # B x D x T
+            c = torch.FloatTensor(c).unsqueeze(0).transpose(2, 1)
+        c = c.to(self.first_conv.weight.device)
 
-            if fold_num > 1:
-                remainder = fold_num - c.shape[2] % fold_num
-                c = torch.nn.functional.pad(c, (0, remainder), 'constant')
-                c = c.view(c.shape[1], fold_num, c.shape[2]//fold_num).permute(1,0,2)
+        if fold_num > 1:
+            remainder = fold_num - c.shape[2] % fold_num
+            c = torch.nn.functional.pad(c, (0, remainder), 'constant')
+            c = c.view(c.shape[1], fold_num, c.shape[2]//fold_num).permute(1,0,2)
 
-            x = torch.randn(fold_num, 1, c.shape[-1] * hop_size).to(self.first_conv.weight.device)
-            c = torch.nn.functional.pad(c, (pad_size, pad_size), 'replicate')
+        x = torch.randn(fold_num, 1, c.shape[-1] * hop_size).to(self.first_conv.weight.device)
+        c = torch.nn.functional.pad(c, (pad_size, pad_size), 'replicate')
 
-            B, _, T = x.size()
+        B, _, T = x.size()
 
-            # perform upsampling
-            if c is not None and self.upsample_net is not None:
-                # B x D x T
-                c = self.upsample_net(c)
-                assert c.size(-1) == x.size(-1), f"{c.size(-1)} vs {x.size(-1)}"
+        # perform upsampling
+        if c is not None and self.upsample_net is not None:
+            # B x D x T
+            c = self.upsample_net(c)
+            assert c.size(-1) == x.size(-1), f"{c.size(-1)} vs {x.size(-1)}"
 
-            # encode to hidden representation
-            x = self.first_conv(x)
-            skips = 0
-            for f in self.conv_layers:
-                x, h = f(x, c)
-                skips += h
-            skips *= math.sqrt(1.0 / len(self.conv_layers))
+        # encode to hidden representation
+        x = self.first_conv(x)
+        skips = 0
+        for f in self.conv_layers:
+            x, h = f(x, c)
+            skips += h
+        skips *= math.sqrt(1.0 / len(self.conv_layers))
 
-            # apply final layers
-            x = skips
-            for f in self.last_conv_layers:
-                x = f(x)
-            return x.flatten()
+        # apply final layers
+        x = skips
+        for f in self.last_conv_layers:
+            x = f(x)
+        return x.flatten()
 
     def fold_with_overlap(self, x, target, overlap):
-        breakpoint()
         _, features, seq_len = x.shape
 
         # Calculate variables needed
