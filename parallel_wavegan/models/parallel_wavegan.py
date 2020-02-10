@@ -14,6 +14,7 @@ from parallel_wavegan.layers import Conv1d
 from parallel_wavegan.layers import Conv1d1x1
 from parallel_wavegan.layers import ResidualBlock
 from parallel_wavegan.layers import upsample
+from parallel_wavegan import models
 
 
 class ParallelWaveGANGenerator(torch.nn.Module):
@@ -31,6 +32,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
                  aux_channels=80,
                  aux_context_window=2,
                  dropout=0.0,
+                 bias=True,
                  use_weight_norm=True,
                  use_causal_conv=False,
                  upsample_conditional_features=True,
@@ -51,6 +53,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
             aux_channels (int): Number of channels for auxiliary feature conv.
             aux_context_window (int): Context window size for auxiliary feature.
             dropout (float): Dropout rate. 0.0 means no dropout applied.
+            bias (bool): Whether to use bias parameter in conv layer.
             use_weight_norm (bool): Whether to use weight norm.
                 If set to true, it will be applied to all of the conv layers.
             use_causal_conv (bool): Whether to use causal structure.
@@ -67,6 +70,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
         self.stacks = stacks
         self.kernel_size = kernel_size
         self.aux_context_window = aux_context_window
+        self.upsample_scales = upsample_params['upsample_scales']
 
         # check the number of layers and stacks
         assert layers % stacks == 0
@@ -80,12 +84,20 @@ class ParallelWaveGANGenerator(torch.nn.Module):
             upsample_params.update({
                 "use_causal_conv": use_causal_conv,
             })
-            if upsample_net == "ConvInUpsampleNetwork":
+            if upsample_net == "MelGANGenerator":
+                assert aux_context_window == 0
                 upsample_params.update({
-                    "aux_channels": aux_channels,
-                    "aux_context_window": aux_context_window,
+                    "use_weight_norm": False,  # not to apply twice
+                    "use_final_nolinear_activation": False,
                 })
-            self.upsample_net = getattr(upsample, upsample_net)(**upsample_params)
+                self.upsample_net = getattr(models, upsample_net)(**upsample_params)
+            else:
+                if upsample_net == "ConvInUpsampleNetwork":
+                    upsample_params.update({
+                        "aux_channels": aux_channels,
+                        "aux_context_window": aux_context_window,
+                    })
+                self.upsample_net = getattr(upsample, upsample_net)(**upsample_params)
         else:
             self.upsample_net = None
 
@@ -101,7 +113,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
                 aux_channels=aux_channels,
                 dilation=dilation,
                 dropout=dropout,
-                bias=True,  # NOTE: magenda uses bias, but musyoku doesn't
+                bias=bias,
                 use_causal_conv=use_causal_conv,
             )
             self.conv_layers += [conv]
@@ -149,7 +161,7 @@ class ParallelWaveGANGenerator(torch.nn.Module):
 
         return x
 
-    
+    @torch.no_grad()
     def inference(self, c, hop_size, fold_num=1):
         """Calculate forward propagation.
         Args:
@@ -159,45 +171,43 @@ class ParallelWaveGANGenerator(torch.nn.Module):
         Returns:
             Tensor: Output tensor (B, out_channels, T)
         """
-        with torch.no_grad():
-            pad_size = self.aux_context_window
-            if not isinstance(c, torch.FloatTensor): 
-                # B x D x T
-                c = torch.FloatTensor(c).unsqueeze(0).transpose(2, 1)
-            c = c.to(self.first_conv.weight.device)
+        pad_size = self.aux_context_window
+        if not isinstance(c, torch.FloatTensor): 
+            # B x D x T
+            c = torch.FloatTensor(c).unsqueeze(0).transpose(2, 1)
+        c = c.to(self.first_conv.weight.device)
 
-            if fold_num > 1:
-                remainder = fold_num - c.shape[2] % fold_num
-                c = torch.nn.functional.pad(c, (0, remainder), 'constant')
-                c = c.view(c.shape[1], fold_num, c.shape[2]//fold_num).permute(1,0,2)
+        if fold_num > 1:
+            remainder = fold_num - c.shape[2] % fold_num
+            c = torch.nn.functional.pad(c, (0, remainder), 'constant')
+            c = c.view(c.shape[1], fold_num, c.shape[2]//fold_num).permute(1,0,2)
 
-            x = torch.randn(fold_num, 1, c.shape[-1] * hop_size).to(self.first_conv.weight.device)
-            c = torch.nn.functional.pad(c, (pad_size, pad_size), 'replicate')
+        x = torch.randn(fold_num, 1, c.shape[-1] * hop_size).to(self.first_conv.weight.device)
+        c = torch.nn.functional.pad(c, (pad_size, pad_size), 'replicate')
 
-            B, _, T = x.size()
+        B, _, T = x.size()
 
-            # perform upsampling
-            if c is not None and self.upsample_net is not None:
-                # B x D x T
-                c = self.upsample_net(c)
-                assert c.size(-1) == x.size(-1), f"{c.size(-1)} vs {x.size(-1)}"
+        # perform upsampling
+        if c is not None and self.upsample_net is not None:
+            # B x D x T
+            c = self.upsample_net(c)
+            assert c.size(-1) == x.size(-1), f"{c.size(-1)} vs {x.size(-1)}"
 
-            # encode to hidden representation
-            x = self.first_conv(x)
-            skips = 0
-            for f in self.conv_layers:
-                x, h = f(x, c)
-                skips += h
-            skips *= math.sqrt(1.0 / len(self.conv_layers))
+        # encode to hidden representation
+        x = self.first_conv(x)
+        skips = 0
+        for f in self.conv_layers:
+            x, h = f(x, c)
+            skips += h
+        skips *= math.sqrt(1.0 / len(self.conv_layers))
 
-            # apply final layers
-            x = skips
-            for f in self.last_conv_layers:
-                x = f(x)
-            return x.flatten()
+        # apply final layers
+        x = skips
+        for f in self.last_conv_layers:
+            x = f(x)
+        return x.flatten()
 
     def fold_with_overlap(self, x, target, overlap):
-        breakpoint()
         _, features, seq_len = x.shape
 
         # Calculate variables needed

@@ -157,11 +157,12 @@ class Trainer(object):
     def _train_step(self, batch):
         """Train model one step."""
         # parse batch
-        batch = [b.to(self.device) for b in batch]
-        z, c, y = batch
+        x, y = batch
+        x = tuple([x_.to(self.device) for x_ in x])
+        y = y.to(self.device)
 
         # calculate generator loss
-        y_ = self.model["generator"](z, c)
+        y_ = self.model["generator"](*x)
         y, y_ = y.squeeze(1), y_.squeeze(1)
         sc_loss, mag_loss = self.criterion["stft"](y_, y)
         gen_loss = sc_loss + mag_loss
@@ -232,14 +233,16 @@ class Trainer(object):
         logging.info(f"(Steps: {self.steps}) Finished {self.epochs} epoch training "
                      f"({self.train_steps_per_epoch} steps per epoch).")
 
+    @torch.no_grad()
     def _eval_step(self, batch):
         """Evaluate model one step."""
         # parse batch
-        batch = [b.to(self.device) for b in batch]
-        z, c, y = batch
+        x, y = batch
+        x = tuple([x_.to(self.device) for x_ in x])
+        y = y.to(self.device)
 
         # calculate generator loss
-        y_ = self.model["generator"](z, c)
+        y_ = self.model["generator"](*x)
         p_ = self.model["discriminator"](y_)
         y, y_, p_ = y.squeeze(1), y_.squeeze(1), p_.squeeze(1)
         adv_loss = self.criterion["mse"](p_, p_.new_ones(p_.size()))
@@ -273,8 +276,7 @@ class Trainer(object):
         # calculate loss for each batch
         for eval_steps_per_epoch, batch in enumerate(tqdm(self.data_loader["dev"], desc="[eval]", file=sys.stdout), 1):
             # eval one step
-            with torch.no_grad():
-                self._eval_step(batch)
+            self._eval_step(batch)
 
             # save intermediate result
             if eval_steps_per_epoch == 1:
@@ -298,16 +300,17 @@ class Trainer(object):
         for key in self.model.keys():
             self.model[key].train()
 
+    @torch.no_grad()
     def _genearete_and_save_intermediate_result(self, batch):
         """Generate and save intermediate result."""
         # delayed import to avoid error related backend error
         import matplotlib.pyplot as plt
 
         # generate
-        with torch.no_grad():
-            batch = [b.to(self.device) for b in batch]
-            z_batch, c_batch, y_batch = batch
-            y_batch_ = self.model["generator"](z_batch, c_batch)
+        x_batch, y_batch = batch
+        x_batch = tuple([x.to(self.device) for x in x_batch])
+        y_batch = y_batch.to(self.device)
+        y_batch_ = self.model["generator"](*x_batch)
 
         # check directory
         dirname = os.path.join(self.config["outdir"], f"predictions/{self.steps}steps")
@@ -331,6 +334,26 @@ class Trainer(object):
             plt.savefig(figname)
             plt.close()
             
+
+            # plot spectrogram and save it
+            spectrogram = self.ap.melspectrogram(y)  # pylint: disable=protected-access
+            fig_spec = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+            spectrogram_ = self.ap.melspectrogram(y_)
+            fig_spec_ = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram_, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
+            spectrogram_diff = abs(spectrogram - spectrogram_)
+            fig_spec_diff = plt.figure(figsize=(16, 10))
+            plt.imshow(spectrogram_diff, aspect="auto", origin="lower")
+            plt.colorbar()
+            plt.tight_layout()
+            plt.close()
 
             # plot spectrogram and save it
             spectrogram = self.ap.melspectrogram(y)  # pylint: disable=protected-access
@@ -406,7 +429,8 @@ class Collater(object):
     def __init__(self,
                  batch_max_steps,
                  hop_size,
-                 aux_context_window
+                 aux_context_window,
+                 use_noise_input
                  ):
         """Initialize customized collater for PyTorch DataLoader.
 
@@ -414,6 +438,7 @@ class Collater(object):
             batch_max_steps (int): The maximum length of input signal in batch.
             hop_size (int): Hop size of auxiliary features.
             aux_context_window (int): Context window size for auxiliary feature conv.
+            use_noise_input (bool): Whether to use noise input.
 
         """
         if batch_max_steps % hop_size != 0:
@@ -423,6 +448,7 @@ class Collater(object):
         self.batch_max_frames = batch_max_steps // hop_size
         self.hop_size = hop_size
         self.aux_context_window = aux_context_window
+        self.use_noise_input = use_noise_input
 
     def __call__(self, batch):
         """Convert into batch tensors.
@@ -462,9 +488,11 @@ class Collater(object):
         c_batch = torch.FloatTensor(np.array(c_batch)).transpose(2, 1)  # (B, C, T')
 
         # make input noise signal batch tensor
-        z_batch = torch.randn(y_batch.size())  # (B, 1, T)
-
-        return z_batch, c_batch, y_batch
+        if self.use_noise_input:
+            z_batch = torch.randn(y_batch.size())  # (B, 1, T)
+            return (z_batch, c_batch), y_batch
+        else:
+            return (c_batch,), y_batch
 
     @staticmethod
     def _assert_ready_for_upsampling(x, c, hop_size, context_window):
@@ -531,6 +559,7 @@ def main():
     with open(args.config) as f:
         config = yaml.load(f, Loader=yaml.Loader)
     config.update(vars(args))
+    config["version"] = parallel_wavegan.__version__  # add version info
 
     # init AudioProcessor
     ap = AudioProcessor(**config['audio'])
@@ -547,7 +576,7 @@ def main():
     # get dataset
     if config["remove_short_samples"]:
         mel_length_threshold = config["batch_max_steps"] // config["hop_size"] + \
-            2 * config["generator_params"]["aux_context_window"]
+            2 * config["generator_params"].get("aux_context_window", 0)
     else:
         mel_length_threshold = None
     # if config["format"] == "hdf5":
@@ -582,7 +611,11 @@ def main():
     collater = Collater(
         batch_max_steps=config["batch_max_steps"],
         hop_size=config["hop_size"],
-        aux_context_window=config["generator_params"]["aux_context_window"],
+        # keep compatibility
+        aux_context_window=config["generator_params"].get("aux_context_window", 0),
+        # keep compatibility
+        use_noise_input=config.get(
+            "generator_type", "ParallelWaveGANGenerator") != "MelGANGenerator",
     )
     train_sampler, dev_sampler = None, None
     if args.distributed:
@@ -592,12 +625,14 @@ def main():
             dataset=dataset["train"],
             num_replicas=args.world_size,
             rank=args.rank,
-            shuffle=True)
+            shuffle=True,
+        )
         dev_sampler = DistributedSampler(
             dataset=dataset["dev"],
             num_replicas=args.world_size,
             rank=args.rank,
-            shuffle=False)
+            shuffle=False,
+        )
     data_loader = {
         "train": DataLoader(
             dataset=dataset["train"],
@@ -606,7 +641,8 @@ def main():
             batch_size=config["batch_size"],
             num_workers=config["num_workers"],
             sampler=train_sampler,
-            pin_memory=config["pin_memory"]),
+            pin_memory=config["pin_memory"],
+        ),
         "dev": DataLoader(
             dataset=dataset["dev"],
             shuffle=False if args.distributed else True,
@@ -614,19 +650,20 @@ def main():
             batch_size=config["batch_size"],
             num_workers=config["num_workers"],
             sampler=dev_sampler,
-            pin_memory=config["pin_memory"]),
+            pin_memory=config["pin_memory"],
+        ),
     }
 
     # define models and optimizers
     generator_class = getattr(
         parallel_wavegan.models,
-        # keep config compatibility
-        config.get("generator_type", "ParallelWaveGANGenerator")
+        # keep compatibility
+        config.get("generator_type", "ParallelWaveGANGenerator"),
     )
     discriminator_class = getattr(
         parallel_wavegan.models,
-        # keep config compatibility
-        config.get("discriminator_type", "ParallelWaveGANDiscriminator")
+        # keep compatibility
+        config.get("discriminator_type", "ParallelWaveGANDiscriminator"),
     )
     model = {
         "generator": generator_class(
@@ -639,6 +676,10 @@ def main():
         model['generator'] = DistributedDataParallel(model['generator'])
         model['discriminator'] = DistributedDataParallel(model['discriminator'])
     # END DISTRIBUTED
+
+    # check upsample scales vs hop size
+    assert np.prod(model['generator'].upsample_scales) == ap.hop_length, " [!] upsample_scales needs to align hop_size"
+
     stft_loss_params = {
         "fft_sizes": [2 * ap.n_fft, ap.n_fft, ap.n_fft // 2],
         "hop_sizes": [2 * ap.hop_length, ap.hop_length, ap.hop_length // 2],

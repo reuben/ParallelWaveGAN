@@ -3,7 +3,7 @@ import soundfile as sf
 import numpy as np
 import scipy.io
 import scipy.signal
-
+ 
 
 class AudioProcessor(object):
     def __init__(self,
@@ -15,7 +15,7 @@ class AudioProcessor(object):
                  ref_level_db=None,
                  num_freq=None,
                  power=None,
-                 preemphasis=None,
+                 preemphasis=0.0,
                  signal_norm=None,
                  symmetric_norm=None,
                  max_norm=None,
@@ -24,6 +24,7 @@ class AudioProcessor(object):
                  clip_norm=True,
                  griffin_lim_iters=None,
                  do_trim_silence=False,
+                 trim_db=60,
                  sound_norm=False,
                  **_):
 
@@ -46,8 +47,10 @@ class AudioProcessor(object):
         self.max_norm = 1.0 if max_norm is None else float(max_norm)
         self.clip_norm = clip_norm
         self.do_trim_silence = do_trim_silence
+        self.trim_db = trim_db
         self.sound_norm = sound_norm
         self.n_fft, self.hop_length, self.win_length = self._stft_parameters()
+        assert min_level_db != 0.0, " [!] min_level_db is 0"
         members = vars(self)
         for key, value in members.items():
             print(" | > {}:{}".format(key, value))
@@ -65,12 +68,11 @@ class AudioProcessor(object):
         return np.maximum(1e-10, np.dot(inv_mel_basis, mel_spec))
 
     def _build_mel_basis(self, ):
-        n_fft = (self.num_freq - 1) * 2
         if self.mel_fmax is not None:
             assert self.mel_fmax <= self.sample_rate // 2
         return librosa.filters.mel(
             self.sample_rate,
-            n_fft,
+            self.n_fft,
             n_mels=self.num_mels,
             fmin=self.mel_fmin,
             fmax=self.mel_fmax)
@@ -131,12 +133,12 @@ class AudioProcessor(object):
 
     def apply_preemphasis(self, x):
         if self.preemphasis == 0:
-            raise RuntimeError(" !! Preemphasis is applied with factor 0.0. ")
+            raise RuntimeError(" [!] Preemphasis is set 0.0.")
         return scipy.signal.lfilter([1, -self.preemphasis], [1], x)
 
     def apply_inv_preemphasis(self, x):
         if self.preemphasis == 0:
-            raise RuntimeError(" !! Preemphasis is applied with factor 0.0. ")
+            raise RuntimeError(" [!] Preemphasis is set 0.0.")
         return scipy.signal.lfilter([1], [1, -self.preemphasis], x)
 
     def spectrogram(self, y):
@@ -181,15 +183,6 @@ class AudioProcessor(object):
         mel = self._normalize(S)
         return mel
 
-    def padding_correction(self, x, fsize, fshift, pad_both_sides=False):
-        '''Correct librosa padding in spec. computation'''
-        pad = (x.shape[0] // self.hop_length + 1) * self.hop_length - x.shape[0]
-        if pad_both_sides:
-            l_pad, r_pad = pad // 2, pad // 2 + pad % 2			
-        else:
-            l_pad, r_pad = 0, pad
-        x_padded = np.pad(x, (l_pad, r_pad), mode='constant', constant_values=0.)
-        return x_padded
 
     def _griffin_lim(self, S):
         angles = np.exp(2j * np.pi * np.random.rand(*S.shape))
@@ -222,12 +215,22 @@ class AudioProcessor(object):
                 return x + hop_length
         return len(wav)
 
+    def padding_correction(self, x, fsize, fshift, pad_both_sides=False):
+        '''Correct librosa padding in spec. computation'''
+        pad = (x.shape[0] // self.hop_length + 1) * self.hop_length - x.shape[0]
+        if pad_both_sides:
+            l_pad, r_pad = pad // 2, pad // 2 + pad % 2			
+        else:
+            l_pad, r_pad = 0, pad
+        x_padded = np.pad(x, (l_pad, r_pad), mode='constant', constant_values=0.)
+        return x_padded
+
     def trim_silence(self, wav):
         """ Trim silent parts with a threshold and 0.01 sec margin """
         margin = int(self.sample_rate * 0.01)
         wav = wav[margin:-margin]
         return librosa.effects.trim(
-            wav, top_db=60, frame_length=self.win_length, hop_length=self.hop_length)[0]
+            wav, top_db=self.trim_db, frame_length=self.win_length, hop_length=self.hop_length)[0]
 
     @staticmethod
     def mulaw_encode(wav, qc):

@@ -9,7 +9,7 @@ datasets:
     [
         {
             name: "tts_gen",
-            path: "/data/rw/home/LJSpeech-1.1/pwgan-no-norm/",
+            path: "/home/erogol/Data/LJSpeech-1.1/pwgan-v2/",
             metafile_train: "metadata.txt",
             metafile_val: null,
             stats: null
@@ -36,6 +36,7 @@ audio:
   mel_fmax: 8000.0
   do_trim_silence: true
   sound_norm: false
+  trim_db: 60
 
 ###########################################################
 #         GENERATOR NETWORK ARCHITECTURE SETTING          #
