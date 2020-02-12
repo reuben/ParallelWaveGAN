@@ -1,5 +1,4 @@
 import librosa
-import soundfile as sf
 import numpy as np
 import scipy.io
 import scipy.signal
@@ -249,6 +248,7 @@ class AudioProcessor(object):
         return x
 
     def load_wav(self, filename, sr=None):
+        import soundfile as sf
         if sr is None:
             x, sr = sf.read(filename)
         else:
