@@ -18,7 +18,7 @@ if LooseVersion(sys.version) < LooseVersion("3.6"):
 
 dirname = os.path.dirname(__file__)
 setup(name="parallel_wavegan",
-      version="0.2.8",
+      version="0.2.9",
       url="http://github.com/erogol/ParallelWaveGAN",
       author="Eren Gölge",
       description="Parallel WaveGAN implementation",
@@ -32,6 +32,7 @@ setup(name="parallel_wavegan",
         "numpy==1.15.4",
         "scipy==1.4.1",
         "librosa==0.7.2",
+        "h5py==2.10.0",
       ],
       classifiers=[
           "Programming Language :: Python :: 3.6",
